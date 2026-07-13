@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>云端同步状态检查</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      overflow: hidden;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+
+    .header h1 {
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+
+    .header p {
+      opacity: 0.9;
+      font-size: 14px;
+    }
+
+    .content {
+      padding: 30px;
+    }
+
+    .section {
+      margin-bottom: 30px;
+    }
+
+    .section h2 {
+      font-size: 18px;
+      color: #333;
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .status-badge.success {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .status-badge.error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .status-badge.warning {
+      background: #fef9c3;
+      color: #854d0e;
+    }
+
+    .data-list {
+      background: #f9fafb;
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .data-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 15px;
+      background: white;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      border: 1px solid #e5e7eb;
+    }
+
+    .data-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .data-item .name {
+      font-weight: 600;
+      color: #333;
+    }
+
+    .data-item .time {
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    .data-item .empty {
+      color: #9ca3af;
+      font-style: italic;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .info-box {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+
+    .info-box h3 {
+      font-size: 14px;
+      color: #1e40af;
+      margin-bottom: 8px;
+    }
+
+    .info-box p {
+      font-size: 13px;
+      color: #3b82f6;
+      line-height: 1.6;
+    }
+
+    .error-box {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+
+    .error-box h3 {
+      font-size: 14px;
+      color: #991b1b;
+      margin-bottom: 8px;
+    }
+
+    .error-box p {
+      font-size: 13px;
+      color: #dc2626;
+      line-height: 1.6;
+      font-family: monospace;
+    }
+
+    .footer {
+      background: #f9fafb;
+      padding: 20px 30px;
+      text-align: center;
+      border-top: 1px solid #e5e7eb;
+    }
+
+    .footer p {
+      font-size: 12px;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>☁️ 云端同步状态检查</h1>
+      <p>检查管理员配置是否已同步到 Supabase 云端</p>
+    </div>
+
+    <div class="content">
+      <div class="info-box">
+        <h3>💡 说明</h3>
+        <p>此工具会检查 Supabase 数据库中的云端配置数据。如果显示"暂无数据"，说明您还没有在管理界面点击保存按钮，或者保存过程中出现了错误。</p>
+      </div>
+
+      <div class="section">
+        <h2>
+          📊 云端数据状态
+          <span id="overallStatus" class="status-badge warning">
+            <span class="spinner"></span>
+            检查中...
+          </span>
+        </h2>
+
+        <div class="data-list">
+          <div class="data-item">
+            <span class="name">🌐 全局配置</span>
+            <span id="globalConfig" class="time">
+              <span class="spinner"></span> 检查中...
+            </span>
+          </div>
+
+          <div class="data-item">
+            <span class="name">👥 角色列表</span>
+            <span id="characters" class="time">
+              <span class="spinner"></span> 检查中...
+            </span>
+          </div>
+
+          <div class="data-item">
+            <span class="name">📱 联系信息</span>
+            <span id="contactInfo" class="time">
+              <span class="spinner"></span> 检查中...
+            </span>
+          </div>
+
+          <div class="data-item">
+            <span class="name">🔊 TTS 预设</span>
+            <span id="ttsPresets" class="time">
+              <span class="spinner"></span> 检查中...
+            </span>
+          </div>
+
+          <div class="data-item">
+            <span class="name">💌 信箱提示词</span>
+            <span id="mailboxPrompts" class="time">
+              <span class="spinner"></span> 检查中...
+            </span>
+          </div>
+
+          <div class="data-item">
+            <span class="name">📖 帮助内容</span>
+            <span id="helpContent" class="time">
+              <span class="spinner"></span> 检查中...
+            </span>
+          </div>
+
+          <div class="data-item">
+            <span class="name">🔗 版本更新 URL</span>
+            <span id="versionUrl" class="time">
+              <span class="spinner"></span> 检查中...
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div id="errorBox" class="error-box" style="display: none;">
+        <h3>❌ 错误</h3>
+        <p id="errorMessage"></p>
+      </div>
+
+      <div class="section">
+        <h2>🔧 本地存储状态</h2>
+
+        <div class="data-list">
+          <div class="data-item">
+            <span class="name">💾 管理员配置</span>
+            <span id="localConfig" class="time">
+              <span class="spinner"></span> 检查中...
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div style="text-align: center; margin-top: 30px;">
+        <button id="refreshBtn" class="btn" onclick="checkAll()">
+          🔄 重新检查
+        </button>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p>AI 聊天平台 · 云端同步状态检查工具</p>
+    </div>
+  </div>
+
+  <script>
+    // Supabase 配置
+    const SUPABASE_URL = 'https://obymoypzamyrnmfliwod.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_ls3mCKcjDEPg_h-0dU96Hg_ZkYadtFQ';
+
+    // 创建 Supabase 客户端
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // 云端数据键名
+    const CLOUD_KEYS = {
+      GLOBAL_CONFIG: 'global_config',
+      CHARACTERS: 'cloud_characters',
+      CONTACT_INFO: 'cloud_contact_info',
+      TTS_PRESETS: 'cloud_tts_presets',
+      MAILBOX_PROMPTS: 'cloud_mailbox_prompts',
+      HELP_CONTENT: 'cloud_help_content',
+      VERSION_URL: 'cloud_version_url',
+    };
+
+    // 本地存储键名
+    const LOCAL_KEYS = {
+      CONTACT_INFO: 'ai_chat_contact_info',
+      TTS_PRESETS: 'ai_chat_tts_presets',
+      MAILBOX_PROMPTS: 'ai_chat_mailbox_prompts',
+      HELP_CONTENT: 'ai_chat_help_content',
+      NEW_VERSION_URL: 'ai_chat_new_version_url',
+    };
+
+    // 格式化时间
+    function formatTime(isoString) {
+      if (!isoString) return '未知';
+      const date = new Date(isoString);
+      return date.toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+
+    // 更新状态显示
+    function updateStatus(id, hasData, time = null, details = '') {
+      const element = document.getElementById(id);
+      if (hasData) {
+        element.innerHTML = `<span class="status-badge success">✅ 已同步</span> ${time ? '· ' + formatTime(time) : ''} ${details}`;
+      } else {
+        element.innerHTML = `<span class="status-badge warning">⚠️ 未同步</span> ${details}`;
+      }
+    }
+
+    // 检查云端数据
+    async function checkCloudData() {
+      let hasAnyData = false;
+      let totalItems = 0;
+      let syncedItems = 0;
+
+      try {
+        // 1. 检查全局配置
+        totalItems++;
+        const { data: globalConfig } = await supabase
+          .from('global_configs')
+          .select('updated_at')
+          .eq('id', CLOUD_KEYS.GLOBAL_CONFIG)
+          .single();
+
+        if (globalConfig) {
+          syncedItems++;
+          hasAnyData = true;
+          updateStatus('globalConfig', true, globalConfig.updated_at);
+        } else {
+          updateStatus('globalConfig', false, null, '(未保存到云端)');
+        }
+
+        // 2. 检查角色列表
+        totalItems++;
+        const { data: characters } = await supabase
+          .from('cloud_data')
+          .select('updated_at')
+          .eq('id', CLOUD_KEYS.CHARACTERS)
+          .single();
+
+        if (characters) {
+          syncedItems++;
+          hasAnyData = true;
+          updateStatus('characters', true, characters.updated_at);
+        } else {
+          updateStatus('characters', false, null, '(未保存到云端)');
+        }
+
+        // 3. 检查联系信息
+        totalItems++;
+        const { data: contactInfo } = await supabase
+          .from('cloud_data')
+          .select('updated_at')
+          .eq('id', CLOUD_KEYS.CONTACT_INFO)
+          .single();
+
+        if (contactInfo) {
+          syncedItems++;
+          hasAnyData = true;
+          updateStatus('contactInfo', true, contactInfo.updated_at);
+        } else {
+          updateStatus('contactInfo', false, null, '(未保存到云端)');
+        }
+
+        // 4. 检查 TTS 预设
+        totalItems++;
+        const { data: ttsPresets } = await supabase
+          .from('cloud_data')
+          .select('updated_at')
+          .eq('id', CLOUD_KEYS.TTS_PRESETS)
+          .single();
+
+        if (ttsPresets) {
+          syncedItems++;
+          hasAnyData = true;
+          updateStatus('ttsPresets', true, ttsPresets.updated_at);
+        } else {
+          updateStatus('ttsPresets', false, null, '(未保存到云端)');
+        }
+
+        // 5. 检查信箱提示词
+        totalItems++;
+        const { data: mailboxPrompts } = await supabase
+          .from('cloud_data')
+          .select('updated_at')
+          .eq('id', CLOUD_KEYS.MAILBOX_PROMPTS)
+          .single();
+
+        if (mailboxPrompts) {
+          syncedItems++;
+          hasAnyData = true;
+          updateStatus('mailboxPrompts', true, mailboxPrompts.updated_at);
+        } else {
+          updateStatus('mailboxPrompts', false, null, '(未保存到云端)');
+        }
+
+        // 6. 检查帮助内容
+        totalItems++;
+        const { data: helpContent } = await supabase
+          .from('cloud_data')
+          .select('updated_at')
+          .eq('id', CLOUD_KEYS.HELP_CONTENT)
+          .single();
+
+        if (helpContent) {
+          syncedItems++;
+          hasAnyData = true;
+          updateStatus('helpContent', true, helpContent.updated_at);
+        } else {
+          updateStatus('helpContent', false, null, '(未保存到云端)');
+        }
+
+        // 7. 检查版本 URL
+        totalItems++;
+        const { data: versionUrl } = await supabase
+          .from('cloud_data')
+          .select('updated_at')
+          .eq('id', CLOUD_KEYS.VERSION_URL)
+          .single();
+
+        if (versionUrl) {
+          syncedItems++;
+          hasAnyData = true;
+          updateStatus('versionUrl', true, versionUrl.updated_at);
+        } else {
+          updateStatus('versionUrl', false, null, '(未保存到云端)');
+        }
+
+        // 更新总体状态
+        const overallStatus = document.getElementById('overallStatus');
+        if (syncedItems === totalItems) {
+          overallStatus.className = 'status-badge success';
+          overallStatus.innerHTML = '✅ 全部同步';
+        } else if (syncedItems > 0) {
+          overallStatus.className = 'status-badge warning';
+          overallStatus.innerHTML = `⚠️ 部分同步 (${syncedItems}/${totalItems})`;
+        } else {
+          overallStatus.className = 'status-badge error';
+          overallStatus.innerHTML = '❌ 未同步';
+        }
+
+      } catch (error) {
+        console.error('检查云端数据失败:', error);
+        document.getElementById('errorBox').style.display = 'block';
+        document.getElementById('errorMessage').textContent = error.message || '未知错误';
+
+        // 更新所有状态为错误
+        ['globalConfig', 'characters', 'contactInfo', 'ttsPresets', 'mailboxPrompts', 'helpContent', 'versionUrl'].forEach(id => {
+          updateStatus(id, false, null, '(检查失败)');
+        });
+
+        const overallStatus = document.getElementById('overallStatus');
+        overallStatus.className = 'status-badge error';
+        overallStatus.innerHTML = '❌ 检查失败';
+      }
+    }
+
+    // 检查本地存储
+    function checkLocalStorage() {
+      const localData = {
+        'contactInfo': LOCAL_KEYS.CONTACT_INFO,
+        'ttsPresets': LOCAL_KEYS.TTS_PRESETS,
+        'mailboxPrompts': LOCAL_KEYS.MAILBOX_PROMPTS,
+        'helpContent': LOCAL_KEYS.HELP_CONTENT,
+        'newVersionUrl': LOCAL_KEYS.NEW_VERSION_URL,
+      };
+
+      let hasLocalData = false;
+
+      for (const [key, storageKey] of Object.entries(localData)) {
+        const data = localStorage.getItem(storageKey);
+        if (data) {
+          hasLocalData = true;
+          break;
+        }
+      }
+
+      const element = document.getElementById('localConfig');
+      if (hasLocalData) {
+        element.innerHTML = '<span class="status-badge success">✅ 本地有数据</span>';
+      } else {
+        element.innerHTML = '<span class="status-badge warning">⚠️ 本地无数据</span>';
+      }
+    }
+
+    // 检查所有
+    async function checkAll() {
+      document.getElementById('refreshBtn').disabled = true;
+      document.getElementById('refreshBtn').innerHTML = '<span class="spinner"></span> 检查中...';
+
+      await checkCloudData();
+      checkLocalStorage();
+
+      document.getElementById('refreshBtn').disabled = false;
+      document.getElementById('refreshBtn').innerHTML = '🔄 重新检查';
+    }
+
+    // 页面加载时自动检查
+    window.addEventListener('load', checkAll);
+  </script>
+</body>
+</html>
