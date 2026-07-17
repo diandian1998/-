@@ -225,6 +225,23 @@ export function saveUserConfig(config: UserConfig): void {
   }));
 }
 
+// ============ 角色对话名称管理 ============
+
+// 获取指定角色的对话名称
+export function getCharacterDialogName(characterId: string): string {
+  const config = getUserConfig();
+  return config.characterDialogNames?.[characterId] || config.dialogName || '';
+}
+
+// 保存指定角色的对话名称
+export function saveCharacterDialogName(characterId: string, dialogName: string): void {
+  const config = getUserConfig();
+  const characterDialogNames = config.characterDialogNames || {};
+  characterDialogNames[characterId] = dialogName;
+  config.characterDialogNames = characterDialogNames;
+  saveUserConfig(config);
+}
+
 // ============ 全局设置 ============
 
 // 获取全局设置

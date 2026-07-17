@@ -73,7 +73,9 @@ export interface UserConfig {
   autoReplyEnabled: boolean;
   autoReplyInterval: number;
   autoReplyStyle?: string; // 主动消息风格：casual, caring, playful
-  dialogName?: string; // 对话框名称/备注
+  dialogName?: string; // 对话框名称/备注（全局，兼容旧版本）
+  // 每个角色单独对话名称：key为角色ID，value为对话名称
+  characterDialogNames?: Record<string, string>;
   aiCanSendImages?: boolean; // AI是否可以使用图片库
   aiCanSearch?: boolean; // AI是否可以联网搜索
   // 对话风格设置
