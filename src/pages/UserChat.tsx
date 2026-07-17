@@ -316,6 +316,9 @@ export default function UserChat() {
   const [newEmojiName, setNewEmojiName] = useState('');
   const [newEmojiUrl, setNewEmojiUrl] = useState('');
 
+  // Bug-性能优化: 对话框备注本地缓存状态（避免每次按键都操作localStorage）
+  const [dialogNameInput, setDialogNameInput] = useState('');
+
   // Bug9: 日记本清空确认弹窗
   const [showClearAllMemories, setShowClearAllMemories] = useState(false);
 
@@ -364,6 +367,14 @@ export default function UserChat() {
       }
     }
   }, [showTuning, currentCharacter]);
+
+  // Bug-性能优化: 当设置弹窗打开时，初始化对话框备注输入值
+  useEffect(() => {
+    if (showSettings && currentCharacter) {
+      const initialValue = getCharacterDialogName(currentCharacter.id);
+      setDialogNameInput(initialValue);
+    }
+  }, [showSettings, currentCharacter]);
 
   // 从云端同步配置
   useEffect(() => {
@@ -2268,10 +2279,12 @@ ${recentMsgText}
                 </label>
                 <input
                   type="text"
-                  value={getCharacterDialogName(currentCharacter?.id || '')}
-                  onChange={(e) => {
-                    if (currentCharacter) {
-                      saveCharacterDialogName(currentCharacter.id, e.target.value);
+                  value={dialogNameInput}
+                  onChange={(e) => setDialogNameInput(e.target.value)}
+                  onBlur={() => {
+                    // 失焦时保存到localStorage
+                    if (currentCharacter && dialogNameInput !== getCharacterDialogName(currentCharacter.id)) {
+                      saveCharacterDialogName(currentCharacter.id, dialogNameInput);
                     }
                   }}
                   placeholder="给这个对话起个名字"
