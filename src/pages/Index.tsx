@@ -3,10 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { Character } from '../types';
 import { getCharacters, saveCharacters } from '../lib/chatStorage';
 import { syncAllFromCloud } from '../lib/cloudStorage';
-import { Menu, ChevronRight, Sparkles, Settings, Loader, Key, Server, Cpu, Volume2, RefreshCw, Smile, MessageSquare, HelpCircle, X } from 'lucide-react';
-import { getProviderList, getApiProvider } from '../lib/deepseek';
+import { Menu, ChevronRight, Sparkles, Settings, Loader, Key, Server, Cpu, Volume2, RefreshCw, MessageSquare, HelpCircle, X } from 'lucide-react';
+import { getProviderList } from '../lib/deepseek';
 import { getUserConfig, saveUserConfig } from '../lib/chatStorage';
-import { getImageLibrary } from '../lib/chatStorage';
 
 // 缓存键名
 const CACHE_TIMESTAMP_KEY = 'ai_chat_cache_timestamp';
@@ -531,31 +530,6 @@ export default function Index() {
                     />
                   </div>
                 )}
-              </div>
-
-              {/* 共享表情库 */}
-              <div>
-                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
-                  <Smile className="w-4 h-4" />
-                  共享表情库
-                </label>
-                <p className="text-xs text-gray-500 mb-2">所有角色共享的表情包，点击进入表情库管理</p>
-                <button
-                  onClick={() => {
-                    // 先保存设置，然后跳转到聊天页面打开表情库
-                    handleSaveGlobalSettings();
-                    if (characters.length > 0) {
-                      navigate(`/chat?character=${characters[0].id}&openImagePicker=true`);
-                    } else {
-                      navigate('/chat?openImagePicker=true');
-                    }
-                    setShowGlobalSettings(false);
-                    setShowMenu(false);
-                  }}
-                  className="px-4 py-2 bg-pink-100 text-pink-600 rounded-lg hover:bg-pink-200 transition-colors text-sm"
-                >
-                  管理表情库
-                </button>
               </div>
 
               {/* 分隔线 */}
