@@ -21,11 +21,14 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@9 --activate
+
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --ignore-scripts
 
       - name: Build project
-        run: npm run build
+        run: pnpm run build
         env:
           BUILD_MODE: prod
 
