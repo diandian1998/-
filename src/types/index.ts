@@ -47,6 +47,7 @@ export interface ImageLibrary {
   url: string;
   category: string; // 分类：emoji, sticker, photo, meme
   tags?: string[]; // 标签便于搜索
+  characterId?: string; // 所属角色ID，为空表示全局表情包
   createdAt: string;
 }
 
@@ -62,6 +63,8 @@ export interface UserConfig {
   customBackgroundUrl?: string; // 背景图片URL（兼容旧版本，全局）
   // 每个角色单独背景：key为角色ID，value为背景URL
   characterBackgrounds?: Record<string, string>;
+  // 每个角色单独头像：key为角色ID，value为头像URL
+  characterAvatars?: Record<string, string>;
   customTheme?: string;
   apiKey?: string;
   apiProvider?: APIProvider; // API服务商

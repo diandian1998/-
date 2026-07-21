@@ -1,6 +1,6 @@
 {
-  "name": "AI Chat Platform",
-  "short_name": "AI聊天",
+  "name": "电电AI聊天",
+  "short_name": "电电AI",
   "description": "多角色AI聊天平台，支持语音输入和TTS",
   "start_url": "/",
   "display": "standalone",

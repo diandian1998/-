@@ -7,7 +7,7 @@ export const STORAGE_KEYS_EXT = {
   IMAGE_LIBRARY: 'ai_chat_image_library',
 };
 
-// 默认角色
+// 默认角色 - greetingPrompt 留空，开场白从云端同步获取
 export const DEFAULT_CHARACTERS: Character[] = [
   {
     id: 'char_1',
@@ -16,7 +16,7 @@ export const DEFAULT_CHARACTERS: Character[] = [
     description: '一个温柔体贴的女友角色',
     personality: '温柔、善良、体贴',
     systemPrompt: '你是一个温柔体贴的女友，说话轻声细语，关心对方，富有同理心。回复时只用对话形式，不要添加任何动作描写（如：xxx说、xxx想、xxx做等），也不要输出括号内容。',
-    greetingPrompt: '嗨~终于等到你啦，今天过得怎么样？',
+    greetingPrompt: '', // 开场白从云端同步获取
     customInstructions: '禁止输出剧本式动作描写，回复要像正常聊天一样简洁自然。',
     maxTokens: 300,
     createdAt: new Date().toISOString(),
@@ -29,7 +29,7 @@ export const DEFAULT_CHARACTERS: Character[] = [
     description: '一个幽默风趣的损友角色',
     personality: '幽默、搞笑、毒舌',
     systemPrompt: '你是一个幽默风趣的损友，喜欢开玩笑，说话搞笑但不失温暖。回复时只用对话形式，不要添加任何动作描写（如：xxx说、xxx想、xxx做等），也不要输出括号内容。',
-    greetingPrompt: '哟，来了来了，今天有什么新鲜事？',
+    greetingPrompt: '', // 开场白从云端同步获取
     customInstructions: '禁止输出剧本式动作描写，回复要像正常聊天一样简洁有趣。',
     maxTokens: 300,
     createdAt: new Date().toISOString(),
@@ -42,7 +42,7 @@ export const DEFAULT_CHARACTERS: Character[] = [
     description: '一个善解人意的知心姐姐角色',
     personality: '成熟、睿智、善解人意',
     systemPrompt: '你是一个善解人意的知心姐姐，可以倾听对方的烦恼，给予温暖的建议。回复时只用对话形式，不要添加任何动作描写（如：xxx说、xxx想、xxx做等），也不要输出括号内容。',
-    greetingPrompt: '你好呀，有什么想聊聊的吗？姐姐在这里陪你~',
+    greetingPrompt: '', // 开场白从云端同步获取
     customInstructions: '禁止输出剧本式动作描写，回复要像正常聊天一样温暖真诚。',
     maxTokens: 300,
     createdAt: new Date().toISOString(),
@@ -55,7 +55,7 @@ export const DEFAULT_CHARACTERS: Character[] = [
     description: '一个神秘的占卜师角色',
     personality: '神秘、睿智、富有洞察力',
     systemPrompt: '你是一个神秘的占卜师，说话充满神秘感，善于洞察人心。回复时只用对话形式，不要添加任何动作描写（如：xxx说、xxx想、xxx做等），也不要输出括号内容。',
-    greetingPrompt: '命运的齿轮开始转动...你终于来了。',
+    greetingPrompt: '', // 开场白从云端同步获取
     customInstructions: '禁止输出剧本式动作描写，回复要像正常聊天一样神秘有韵味。',
     maxTokens: 300,
     createdAt: new Date().toISOString(),
@@ -68,7 +68,7 @@ export const DEFAULT_CHARACTERS: Character[] = [
     description: '一个傲娇的大小姐角色',
     personality: '傲娇、可爱、嘴硬心软',
     systemPrompt: '你是一个傲娇的大小姐，说话时表面傲慢但内心温柔，嘴硬心软。回复时只用对话形式，不要添加任何动作描写（如：xxx说、xxx想、xxx做等），也不要输出括号内容。',
-    greetingPrompt: '哼，你终于来了...我才没有一直在等你呢！',
+    greetingPrompt: '', // 开场白从云端同步获取
     customInstructions: '禁止输出剧本式动作描写，回复要像正常聊天一样傲娇可爱。',
     maxTokens: 300,
     createdAt: new Date().toISOString(),
@@ -175,6 +175,13 @@ export function clearCharacterMessages(characterId: string): void {
   const userId = getCurrentUserId();
   const key = `${STORAGE_KEYS.MESSAGES}_${userId}_${characterId}`;
   localStorage.removeItem(key);
+}
+
+// 保存消息列表（覆盖）
+export function saveMessages(characterId: string, messages: Message[]): void {
+  const userId = getCurrentUserId();
+  const key = `${STORAGE_KEYS.MESSAGES}_${userId}_${characterId}`;
+  localStorage.setItem(key, JSON.stringify(messages));
 }
 
 // 获取所有角色的最新消息（用于主动发消息功能）
@@ -354,23 +361,28 @@ export function getMemoriesByCharacter(characterId: string): MemoryNode[] {
 export const DEFAULT_IMAGE_LIBRARY: ImageLibrary[] = [
   {
     id: 'img_test_diandian',
-    name: '电电的测试',
+    name: '电电',
     url: 'https://tucdn.wpon.cn/2026/07/07/4866090e19b05-1783423697.jpg',
     category: 'emoji',
-    tags: ['电电的测试', '测试'],
+    tags: ['电电'],
     createdAt: new Date().toISOString()
   }
 ];
 
-// 获取图片库
-export function getImageLibrary(): ImageLibrary[] {
+// 获取图片库（支持按角色过滤）
+export function getImageLibrary(characterId?: string): ImageLibrary[] {
   const data = localStorage.getItem(STORAGE_KEYS_EXT.IMAGE_LIBRARY);
   if (!data) {
     // 初始化默认图片
     saveImageLibrary(DEFAULT_IMAGE_LIBRARY);
     return DEFAULT_IMAGE_LIBRARY;
   }
-  return JSON.parse(data);
+  const allImages: ImageLibrary[] = JSON.parse(data);
+  if (!characterId) {
+    return allImages;
+  }
+  // 返回该角色的表情包 + 全局表情包（characterId 为空）
+  return allImages.filter(img => !img.characterId || img.characterId === characterId);
 }
 
 // 保存图片库
@@ -402,10 +414,10 @@ export function getImagesByCategory(category: string): ImageLibrary[] {
   return getImageLibrary().filter(img => img.category === category);
 }
 
-// 搜索图片
-export function searchImages(keyword: string): ImageLibrary[] {
+// 搜索图片（支持按角色过滤）
+export function searchImages(keyword: string, characterId?: string): ImageLibrary[] {
   const lowerKeyword = keyword.toLowerCase();
-  return getImageLibrary().filter(img =>
+  return getImageLibrary(characterId).filter(img =>
     img.name.toLowerCase().includes(lowerKeyword) ||
     img.tags?.some(tag => tag.toLowerCase().includes(lowerKeyword))
   );

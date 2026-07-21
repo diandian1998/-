@@ -331,17 +331,6 @@ export default function Index() {
               <Settings className="w-5 h-5" />
               <span className="text-sm font-medium">全局设置</span>
             </button>
-            <button
-              onClick={() => {
-                // 跳转到聊天页面并打开菜单
-                navigate('/chat?openMenu=true');
-                setShowMenu(false);
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-gray-700 transition-colors"
-            >
-              <Menu className="w-5 h-5" />
-              <span className="text-sm font-medium">角色菜单</span>
-            </button>
           </div>
         </>
       )}

@@ -4,7 +4,7 @@ import { Character, Message, MemoryNode, ImageLibrary } from '../types';
 import SecretMailboxModal from '../components/SecretMailboxModal';
 import CalendarView from '../components/CalendarView';
 import {
-  getCharacters, getMessages, saveMessage, getUserConfig, saveUserConfig,
+  getCharacters, getMessages, saveMessage, saveMessages, getUserConfig, saveUserConfig,
   getGlobalSettings, clearCharacterMessages, getStorageUsed, isStorageAlmostFull,
   getMessagesStats, getMemories, saveMemory, deleteMemory, getMemoriesByCharacter,
   getImageLibrary, searchImages, addImageToLibrary, deleteImageFromLibrary, getMailboxLettersByCharacter,
@@ -21,6 +21,7 @@ import {
   getGlobalConfigFromCloud,
   getImageLibraryFromCloud
 } from '../lib/cloudStorage';
+import { getCurrentUserId } from '../lib/supabase';
 import {
   Settings, Send, Mic, MicOff, Image, FileText, Volume2, VolumeX,
   RefreshCw, Trash2, User, Plus, X, BookOpen, Star, ImagePlus,
@@ -306,6 +307,7 @@ export default function UserChat() {
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'syncing' | 'success' | 'offline'>('syncing');
   const [showCharacterPicker, setShowCharacterPicker] = useState(false);
   const [showTuning, setShowTuning] = useState(false);
+  const [cloudSyncComplete, setCloudSyncComplete] = useState(false); // 云端同步是否完成
   const [pendingFile, setPendingFile] = useState<{ name: string; content: string; summary: string } | null>(null);
   const [isSummarizingFile, setIsSummarizingFile] = useState(false);
   const [userCustomPrompt, setUserCustomPrompt] = useState('');
@@ -315,6 +317,7 @@ export default function UserChat() {
   const [showAddEmoji, setShowAddEmoji] = useState(false);
   const [newEmojiName, setNewEmojiName] = useState('');
   const [newEmojiUrl, setNewEmojiUrl] = useState('');
+  const [newEmojiCharacter, setNewEmojiCharacter] = useState(''); // 表情所属角色
 
   // Bug-性能优化: 对话框备注本地缓存状态（避免每次按键都操作localStorage）
   const [dialogNameInput, setDialogNameInput] = useState('');
@@ -327,6 +330,10 @@ export default function UserChat() {
 
   // Bug7: 调教设置云端同步状态
   const [tuningCloudSyncing, setTuningCloudSyncing] = useState(false);
+
+  // 角色头像/背景设置状态
+  const [charAvatarUrl, setCharAvatarUrl] = useState('');
+  const [charBgUrl, setCharBgUrl] = useState('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const autoReplyTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -387,11 +394,64 @@ export default function UserChat() {
         if (cloudData.characters && cloudData.characters.length > 0) {
           saveCharacters(cloudData.characters);
           setCharacters(cloudData.characters); // 更新本地状态
-          // 云端同步完成后，重新加载角色（确保打招呼语等最新数据）
-          if (!currentCharacter || !characters.find(c => c.id === currentCharacter?.id)) {
-            const chars = getCharacters();
-            if (chars.length > 0) {
-              setCurrentCharacter(chars[0]);
+
+          // 修复1：云端同步完成后，使用云端数据更新 currentCharacter
+          if (!currentCharacter) {
+            // 如果没有当前角色，设置为云端的第一个角色
+            const firstChar = cloudData.characters[0];
+            setCurrentCharacter(firstChar);
+            // 云端同步完成后，加载消息（会包含打招呼开场白）
+            // Bug1修复：只有当用户真的没有任何消息且没有打招呼时才创建打招呼消息
+            setTimeout(() => {
+              const msgs = getMessages(firstChar.id);
+              // 如果有消息（包括用户删除后剩余的消息），加载并清理重复
+              if (msgs.length > 0) {
+                loadMessages();
+              } else if (firstChar.greetingPrompt && firstChar.greetingPrompt.trim() !== '') {
+                // 只有真的没有任何消息时才创建打招呼消息
+                const greetingMsg: Message = {
+                  id: 'greeting_' + Date.now(),
+                  role: 'assistant',
+                  content: firstChar.greetingPrompt,
+                  characterId: firstChar.id,
+                  userId: 'current_user',
+                  createdAt: new Date().toISOString(),
+                };
+                // 使用 saveMessages 覆盖模式
+                saveMessages(firstChar.id, [greetingMsg]);
+                lastSavedHashRef.current = [greetingMsg.id].join(',');
+                setMessages([greetingMsg]);
+              }
+            }, 100);
+          } else {
+            // 如果已有角色，从云端数据中找对应角色并更新（确保开场白等最新）
+            const cloudChar = cloudData.characters.find((c: Character) => c.id === currentCharacter.id);
+            if (cloudChar) {
+              // 更新当前角色的最新数据（尤其是 greetingPrompt）
+              setCurrentCharacter({ ...currentCharacter, ...cloudChar });
+              // Bug1修复：云端同步完成后，重新检查并加载打招呼消息
+              // 如果本地已有消息（包括用户刚删除的消息），就不再创建打招呼消息
+              setTimeout(() => {
+                const msgs = getMessages(currentCharacter.id);
+                // 如果有消息（包括用户删除后剩余的消息），加载并清理重复
+                if (msgs.length > 0) {
+                  loadMessages();
+                } else if (cloudChar.greetingPrompt && cloudChar.greetingPrompt.trim() !== '') {
+                  // 只有真的没有任何消息时才创建打招呼消息
+                  const greetingMsg: Message = {
+                    id: 'greeting_' + Date.now(),
+                    role: 'assistant',
+                    content: cloudChar.greetingPrompt,
+                    characterId: cloudChar.id,
+                    userId: 'current_user',
+                    createdAt: new Date().toISOString(),
+                  };
+                  // 使用 saveMessages 覆盖模式
+                  saveMessages(cloudChar.id, [greetingMsg]);
+                  lastSavedHashRef.current = [greetingMsg.id].join(',');
+                  setMessages([greetingMsg]);
+                }
+              }, 100);
             }
           }
         }
@@ -414,6 +474,28 @@ export default function UserChat() {
         if (cloudData.contactInfo) {
           localStorage.setItem(CONTACT_INFO_KEY, JSON.stringify(cloudData.contactInfo));
           setContactInfo(cloudData.contactInfo);
+        }
+
+        // 标记云端同步完成
+        setCloudSyncComplete(true);
+
+        // 自动清理旧的开场白缓存（如果有旧的错误开场白）
+        if (cloudData.characters && cloudData.characters.length > 0) {
+          cloudData.characters.forEach((cloudChar: Character) => {
+            const cachedMsgs = getMessages(cloudChar.id);
+            if (cachedMsgs.length > 0) {
+              const firstMsg = cachedMsgs[0];
+              // 检查是否是旧的占位符开场白（以"嗨~终于等到你啦"开头的错误开场白）
+              const oldGreeting = '嗨~终于等到你啦';
+              if (firstMsg.role === 'assistant' && firstMsg.content.startsWith(oldGreeting)) {
+                // 删除旧的错误开场白 - 使用与 getMessages 相同的 key 格式
+                const userId = 'current_user'; // 默认用户ID
+                const key = `ai_chat_messages_${userId}_${cloudChar.id}`;
+                localStorage.removeItem(key);
+                console.log(`已清理角色 ${cloudChar.name} 的旧开场白缓存`);
+              }
+            }
+          });
         }
 
         // 同步帮助内容
@@ -441,6 +523,19 @@ export default function UserChat() {
 
     syncFromCloud();
   }, []);
+
+  // 初始化角色头像/背景设置
+  useEffect(() => {
+    if (currentCharacter && userConfig) {
+      // 加载该角色的头像
+      const charAvatars = (userConfig as any).characterAvatars || {};
+      setCharAvatarUrl(charAvatars[currentCharacter.id] || currentCharacter.avatar || '');
+
+      // 加载该角色的背景
+      const charBgs = (userConfig as any).characterBackgrounds || {};
+      setCharBgUrl(charBgs[currentCharacter.id] || userConfig.customBackground || '');
+    }
+  }, [currentCharacter, userConfig]);
 
   // 自动保存API Key到localStorage（防止刷新丢失）
   useEffect(() => {
@@ -623,14 +718,32 @@ export default function UserChat() {
       const newUrl = window.location.pathname + (characterId ? `?character=${characterId}` : '');
       window.history.replaceState({}, '', newUrl);
     }
+
+    // Bug3: 处理联系开发者参数，打开留言板弹窗
+    const openMessageBoard = params.get('openMessageBoard');
+    if (openMessageBoard === 'true') {
+      setShowMessageBoard(true);
+      // 清理URL参数，避免刷新时重复打开
+      const newUrl = window.location.pathname + (characterId ? `?character=${characterId}` : '');
+      window.history.replaceState({}, '', newUrl);
+    }
+
+    // Bug3: 处理帮助参数，打开帮助弹窗
+    const openHelp = params.get('openHelp');
+    if (openHelp === 'true') {
+      setShowHelp(true);
+      // 清理URL参数，避免刷新时重复打开
+      const newUrl = window.location.pathname + (characterId ? `?character=${characterId}` : '');
+      window.history.replaceState({}, '', newUrl);
+    }
   }, [characters]);
 
   useEffect(() => {
-    if (currentCharacter) {
+    if (currentCharacter && cloudSyncComplete) {
       loadMessages();
       loadMemories();
     }
-  }, [currentCharacter]);
+  }, [currentCharacter, cloudSyncComplete]);
 
   useEffect(() => {
     scrollToBottom();
@@ -684,8 +797,8 @@ export default function UserChat() {
         content: m.content,
       }));
 
-      // 获取图片库中的表情
-      const images = getImageLibrary();
+      // 获取图片库中的表情（按当前角色过滤）
+      const images = getImageLibrary(currentCharacter?.id);
       const emojiImages = images.filter(img => img.category === 'emoji');
       const emojiList = emojiImages.map(e => `${e.name}: ${e.url}`).join('\n');
 
@@ -738,8 +851,9 @@ ${emojiList}
       const emojiMatch = replyContent.match(/\[([^\]]+)\]$/);
       if (emojiMatch) {
         const emojiName = emojiMatch[1];
+        // 精确匹配表情包名称
         const matchedEmoji = emojiImages.find(e =>
-          e.name.includes(emojiName) || emojiName.includes(e.name)
+          e.name === emojiName
         );
         if (matchedEmoji) {
           imageUrl = matchedEmoji.url;
@@ -781,9 +895,9 @@ ${emojiList}
     }
   };
 
-  // 加载图片库
+  // 加载图片库（按当前角色过滤）
   const loadImageLibrary = () => {
-    setImageLibrary(getImageLibrary());
+    setImageLibrary(getImageLibrary(currentCharacter?.id));
   };
 
   // 生成回忆内容
@@ -872,13 +986,14 @@ ${conversationText}`;
     showToast('已删除记忆', 'info', '🗑️');
   };
 
-  // 添加自定义图片
-  const handleAddCustomImage = (name: string, url: string, category: string = 'photo') => {
+  // 添加自定义图片（支持按角色保存）
+  const handleAddCustomImage = (name: string, url: string, category: string = 'photo', characterId?: string) => {
     const image = addImageToLibrary({
       name,
       url,
       category,
       tags: [name],
+      characterId: characterId || currentCharacter?.id,
     });
     setImageLibrary(prev => [...prev, image]);
   };
@@ -901,6 +1016,7 @@ ${conversationText}`;
   const handleOpenAddEmoji = () => {
     setNewEmojiName('');
     setNewEmojiUrl('');
+    setNewEmojiCharacter(''); // 默认空表示当前角色
     setShowAddEmoji(true);
   };
 
@@ -914,11 +1030,14 @@ ${conversationText}`;
       showToast('请输入图片URL', 'error', '❌');
       return;
     }
-    handleAddCustomImage(newEmojiName.trim(), newEmojiUrl.trim(), 'emoji');
+    // 使用选中的角色或当前角色
+    const targetCharId = newEmojiCharacter || currentCharacter?.id;
+    handleAddCustomImage(newEmojiName.trim(), newEmojiUrl.trim(), 'emoji', targetCharId);
     showToast('表情已添加~', 'success', '✅');
     setShowAddEmoji(false);
     setNewEmojiName('');
     setNewEmojiUrl('');
+    setNewEmojiCharacter(''); // 重置角色选择
   };
 
   // Bug1: 取消添加表情
@@ -926,6 +1045,7 @@ ${conversationText}`;
     setShowAddEmoji(false);
     setNewEmojiName('');
     setNewEmojiUrl('');
+    setNewEmojiCharacter(''); // 重置角色选择
   };
 
   // Bug8: 一键清空所有角色的聊天记录
@@ -1054,13 +1174,67 @@ ${conversationText}`;
     }
   };
 
+  // Bug2修复：清理重复消息的函数
+  // 逻辑：每个用户消息后只保留一个AI回复（最新的那个）
+  const cleanDuplicateMessages = (msgs: Message[]): Message[] => {
+    if (msgs.length <= 1) return msgs;
+
+    const cleaned: Message[] = [];
+    const aiMessages: Message[] = []; // 收集所有AI消息
+
+    for (const msg of msgs) {
+      if (msg.role === 'user') {
+        // 用户消息：如果之前有收集的AI消息，把最后一个加入结果
+        if (aiMessages.length > 0) {
+          cleaned.push(aiMessages[aiMessages.length - 1]); // 保留最后一个（最新的）
+        }
+        aiMessages.length = 0; // 清空收集，准备下一轮
+        cleaned.push(msg);
+      } else {
+        // AI消息：收集起来
+        aiMessages.push(msg);
+      }
+    }
+
+    // 处理最后可能剩余的AI消息
+    if (aiMessages.length > 0) {
+      cleaned.push(aiMessages[aiMessages.length - 1]);
+    }
+
+    return cleaned;
+  };
+
+  // 用于跟踪最后保存的消息hash，避免重复加载
+  const lastSavedHashRef = useRef<string>('');
+
   const loadMessages = () => {
     if (currentCharacter) {
+      // 直接从localStorage读取，不依赖任何缓存
       const msgs = getMessages(currentCharacter.id);
-      setMessages(msgs);
 
-      // 如果消息为空且有打招呼内容，自动发送开场白
-      if (msgs.length === 0 && currentCharacter.greetingPrompt) {
+      // 计算当前消息的hash
+      const currentHash = msgs.map(m => m.id).join(',');
+
+      // 如果hash没变，不重复加载
+      if (currentHash === lastSavedHashRef.current && messages.length > 0) {
+        return;
+      }
+
+      // 清理重复消息
+      const cleanedMsgs = cleanDuplicateMessages(msgs);
+
+      // 保存清理后的消息（如果有必要的话）
+      if (cleanedMsgs.length !== msgs.length) {
+        saveMessages(currentCharacter.id, cleanedMsgs);
+        lastSavedHashRef.current = cleanedMsgs.map(m => m.id).join(',');
+      } else {
+        lastSavedHashRef.current = currentHash;
+      }
+
+      setMessages(cleanedMsgs);
+
+      // 如果消息为空且有打招呼内容，自动创建开场白
+      if (cleanedMsgs.length === 0 && currentCharacter.greetingPrompt && currentCharacter.greetingPrompt.trim() !== '') {
         const greetingMsg: Message = {
           id: 'greeting_' + Date.now(),
           role: 'assistant',
@@ -1069,7 +1243,8 @@ ${conversationText}`;
           userId: 'current_user',
           createdAt: new Date().toISOString(),
         };
-        saveMessage(greetingMsg);
+        saveMessages(currentCharacter.id, [greetingMsg]);
+        lastSavedHashRef.current = [greetingMsg.id].join(',');
         setMessages([greetingMsg]);
       }
     }
@@ -1186,31 +1361,21 @@ ${conversationText}`;
     setMessages(prev => [...prev, savedMsg]);
 
     // ============ 用户消息表情触发逻辑（不经过AI）============
-    // 用户发送消息时立即检测关键词，直接发送表情
+    // 用户发送消息时检测是否包含表情关键词，匹配则触发表情
     const triggerUserEmoji = () => {
-      const emojiImages = getImageLibrary();
+      const emojiImages = getImageLibrary(currentCharacter?.id);
       if (emojiImages.length === 0) return;
 
-      // 负面情绪关键词（不触发）
-      const negativeKeywords = ['吵架', '生气', '滚', '讨厌', '烦', '滚蛋', '去死', '分手', '不要', '滚开'];
+      // 负面情绪关键词：检测到这些词时不触发表情
+      const negativeKeywords = ['吵架', '生气', '烦', '讨厌', '滚', '不要', '滚开', '分手', '离婚'];
       const hasNegative = negativeKeywords.some(kw => userMessage.includes(kw));
       if (hasNegative) return; // 负面情绪不触发
 
-      // 找出匹配的表情
+      // 找出匹配的表情（用户命名的关键词）
       let matchedEmojis: typeof emojiImages = [];
 
-      // 1. 检查是否包含"电电的测试" - 100%触发
-      if (userMessage.includes('电电的测试')) {
-        const testEmoji = emojiImages.find(e => e.name.includes('电电') || e.name.includes('测试'));
-        if (testEmoji) {
-          matchedEmojis.push(testEmoji);
-        }
-      }
-
-      // 2. 检查其他关键词匹配
       for (const emoji of emojiImages) {
-        const emojiName = emoji.name.toLowerCase();
-        // 检查消息是否包含表情名称
+        // 检查消息是否包含表情名称（用户自定义的关键词）
         if (userMessage.includes(emoji.name) || userMessage.includes(emoji.name.replace(/\s/g, ''))) {
           if (!matchedEmojis.find(e => e.id === emoji.id)) {
             matchedEmojis.push(emoji);
@@ -1218,21 +1383,38 @@ ${conversationText}`;
         }
       }
 
-      // 3. 根据规则决定是否发送
+      // 根据规则决定是否发送
       if (matchedEmojis.length > 0) {
         // 随机选择一个匹配的表情
         const selectedEmoji = matchedEmojis[Math.floor(Math.random() * matchedEmojis.length)];
 
-        // 检查是否是首次触发（5分钟内首次触发100%）
-        const emojiTriggerKey = `emoji_trigger_${selectedEmoji.id}_${currentCharacter!.id}`;
-        const lastTrigger = localStorage.getItem(emojiTriggerKey);
-        const isFirstTrigger = !lastTrigger || (Date.now() - parseInt(lastTrigger)) > 5 * 60 * 1000;
+        // 特殊关键词"电电的测试"100%触发
+        const specialKeyword = '电电的测试';
+        const isSpecialKeyword = userMessage.includes(specialKeyword);
 
-        // 首次100%触发，后续50%概率
-        if (isFirstTrigger || Math.random() < 0.5) {
-          // 记录触发时间
-          localStorage.setItem(emojiTriggerKey, Date.now().toString());
+        // 检查表情是否是首次上传（1小时内创建的视为新上传）
+        const emojiCreatedAt = new Date(selectedEmoji.createdAt).getTime();
+        const oneHourAgo = Date.now() - 60 * 60 * 1000;
+        const isNewEmoji = emojiCreatedAt > oneHourAgo;
 
+        // 触发规则：
+        // 1. 特殊关键词"电电的测试" → 100%触发
+        // 2. 新上传的表情（1小时内） → 100%触发
+        // 3. 其他表情 → 50%概率触发
+        let shouldTrigger = false;
+
+        if (isSpecialKeyword) {
+          // 特殊关键词100%触发
+          shouldTrigger = true;
+        } else if (isNewEmoji) {
+          // 新上传表情100%触发
+          shouldTrigger = true;
+        } else {
+          // 其他表情50%概率触发
+          shouldTrigger = Math.random() < 0.5;
+        }
+
+        if (shouldTrigger) {
           // 延迟100ms发送表情
           setTimeout(() => {
             const emojiMsg = saveMessage({
@@ -1300,7 +1482,7 @@ ${conversationText}`;
       fullSystemPrompt += `\n\n【当前时间】\n现在是北京时间：${timeStr}\n请根据当前时间调整你的回复，例如：\n- 不要说"早上好"如果现在是晚上\n- 不要说"晚上好"如果现在是下午\n- 如果用户提到时间，确保与当前时间一致`;
 
       // 表情包使用说明（让AI知道如何使用表情库）
-      const images = getImageLibrary();
+      const images = getImageLibrary(currentCharacter?.id);
       if (images.length > 0) {
         const imageList = images.map(img => `- ${img.name}`).join('\n');
         fullSystemPrompt += `\n\n【表情包库】\n用户上传了以下表情包，你可以适当在回复中提及表情名称（首次提及会100%触发发送，后续随机）：\n${imageList}`;
@@ -1337,7 +1519,7 @@ ${conversationText}`;
 
       // ============ AI自主表情触发逻辑 ============
       // AI根据回复的语境自主判断情绪，自主发送对应表情
-      const emojiImages = getImageLibrary();
+      const emojiImages = getImageLibrary(currentCharacter?.id);
       if (emojiImages.length > 0 && userConfig.aiCanSendImages !== false) {
         // 正面情绪关键词（AI回复中出现这些内容时，考虑发送正面表情）
         const positiveKeywords = ['开心', '高兴', '喜欢', '爱你', '好开心', '太棒了', '哈哈', '笑', '兴奋', '惊喜', '感动', '幸福', '甜蜜', '可爱', '棒', '耶', '好耶', '嘿嘿', '嘻嘻', '嘿嘿嘿', '撒花', '庆祝'];
@@ -1397,25 +1579,52 @@ ${conversationText}`;
               const lastQuickLetter = localStorage.getItem(lastQuickLetterKey);
               if (!lastQuickLetter || now - parseInt(lastQuickLetter) > fiveMinutes) {
                 localStorage.setItem(lastQuickLetterKey, now.toString());
-                setTimeout(() => {
+                // 追踪定时器ID，便于取消
+                if (!(window as any).__pendingAutoLetterTimers) {
+                  (window as any).__pendingAutoLetterTimers = [];
+                }
+                const timerId = setTimeout(() => {
                   generateAutoLetter(currentCharacter!, messages, userConfig.apiKey);
+                  // 完成后移除追踪
+                  const timers = (window as any).__pendingAutoLetterTimers;
+                  const idx = timers.indexOf(timerId);
+                  if (idx > -1) timers.splice(idx, 1);
                 }, 3000);
+                (window as any).__pendingAutoLetterTimers.push(timerId);
               }
             } else if (timeSinceSubscribe <= oneMonth) {
               // 订阅后一个月内：每天约1/30概率推送
               // 简化计算：每次发消息有约3%概率推送（假设每天发10条消息）
               if (Math.random() < 0.03) {
-                setTimeout(() => {
+                // 追踪定时器ID，便于取消
+                if (!(window as any).__pendingAutoLetterTimers) {
+                  (window as any).__pendingAutoLetterTimers = [];
+                }
+                const timerId = setTimeout(() => {
                   generateAutoLetter(currentCharacter!, messages, userConfig.apiKey);
+                  // 完成后移除追踪
+                  const timers = (window as any).__pendingAutoLetterTimers;
+                  const idx = timers.indexOf(timerId);
+                  if (idx > -1) timers.splice(idx, 1);
                 }, 3000);
+                (window as any).__pendingAutoLetterTimers.push(timerId);
               }
             }
           } else {
             // 首次订阅：立即触发一次（100%）
             localStorage.setItem(subscribeTimeKey, now.toString());
-            setTimeout(() => {
+            // 追踪定时器ID，便于取消
+            if (!(window as any).__pendingAutoLetterTimers) {
+              (window as any).__pendingAutoLetterTimers = [];
+            }
+            const timerId = setTimeout(() => {
               generateAutoLetter(currentCharacter!, messages, userConfig.apiKey);
+              // 完成后移除追踪
+              const timers = (window as any).__pendingAutoLetterTimers;
+              const idx = timers.indexOf(timerId);
+              if (idx > -1) timers.splice(idx, 1);
             }, 3000);
+            (window as any).__pendingAutoLetterTimers.push(timerId);
           }
         }
       }
@@ -1616,6 +1825,16 @@ ${recentMsgText}
   const handleSaveSettings = () => {
     // 确保保存最新的 userConfig
     const config = getUserConfig();
+    // 保存角色头像（使用当前角色的 charAvatarUrl）
+    const charAvatars = { ...((config as any).characterAvatars || {}) };
+    if (currentCharacter) {
+      charAvatars[currentCharacter.id] = charAvatarUrl;
+    }
+    // 保存角色背景
+    const charBgs = { ...((config as any).characterBackgrounds || {}) };
+    if (currentCharacter) {
+      charBgs[currentCharacter.id] = charBgUrl;
+    }
     const updatedConfig = {
       ...config,
       apiKey: userConfig.apiKey,
@@ -1631,8 +1850,10 @@ ${recentMsgText}
       customBackgroundUrl: userConfig.customBackgroundUrl,
       customTheme: userConfig.customTheme,
       dialogName: userConfig.dialogName,
-      // 修复2：保存每个角色的背景图片设置
-      characterBackgrounds: userConfig.characterBackgrounds,
+      // 保存每个角色的背景图片设置
+      characterBackgrounds: charBgs,
+      // 保存每个角色的头像设置
+      characterAvatars: charAvatars,
     };
     saveUserConfig(updatedConfig);
     setUserConfig(updatedConfig);
@@ -1660,6 +1881,22 @@ ${recentMsgText}
   const getCurrentCharacterBgUrl = (): string => {
     if (!currentCharacter) return userConfig.customBackgroundUrl || '';
     return userConfig.characterBackgrounds?.[currentCharacter.id] || '';
+  };
+
+  // 获取当前角色对应的头像URL
+  const getCurrentCharacterAvatar = (): string => {
+    if (!currentCharacter) return userConfig.customAvatar || '';
+    return userConfig.characterAvatars?.[currentCharacter.id] || '';
+  };
+
+  // 处理头像URL变更（按角色单独保存）
+  const handleAvatarUrlChange = (url: string) => {
+    if (!currentCharacter) return;
+    const characterAvatars = {
+      ...(userConfig.characterAvatars || {}),
+      [currentCharacter.id]: url,
+    };
+    setUserConfig({ ...userConfig, characterAvatars });
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -1741,9 +1978,9 @@ ${recentMsgText}
               <ChevronLeft className="w-5 h-5 text-gray-600" />
             </button>
             <img
-              src={getAvatarUrl(currentCharacter?.avatar || '', currentCharacter?.name || '')}
+              src={getAvatarUrl(getCurrentCharacterAvatar() || currentCharacter?.avatar || '', currentCharacter?.name || '')}
               alt={currentCharacter?.name}
-              onError={() => handleAvatarError(currentCharacter?.avatar || '')}
+              onError={() => handleAvatarError(getCurrentCharacterAvatar() || currentCharacter?.avatar || '')}
               className="w-10 h-10 rounded-full bg-gray-200"
             />
             <button
@@ -1858,6 +2095,20 @@ ${recentMsgText}
               <Calendar className="w-5 h-5" />
               <span className="text-sm font-medium">日历记录</span>
             </button>
+            <button
+              onClick={() => { setShowSettings(true); setShowNavMenu(false); }}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-blue-50 text-blue-600 transition-colors"
+            >
+              <User className="w-5 h-5" />
+              <span className="text-sm font-medium">角色头像设置</span>
+            </button>
+            <button
+              onClick={() => { setShowSettings(true); setShowNavMenu(false); }}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-green-50 text-green-600 transition-colors"
+            >
+              <Image className="w-5 h-5" />
+              <span className="text-sm font-medium">角色背景设置</span>
+            </button>
 
             <div className="border-t my-2" />
 
@@ -1879,33 +2130,7 @@ ${recentMsgText}
 
             <div className="border-t my-2" />
 
-            {/* 第三组：个性化设置 */}
-            <button
-              onClick={() => {
-                // 头像设置 - 在设置弹窗中滚动到头像部分
-                setShowSettings(true);
-                setShowNavMenu(false);
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-blue-50 text-blue-600 transition-colors"
-            >
-              <User className="w-5 h-5" />
-              <span className="text-sm font-medium">头像设置</span>
-            </button>
-            <button
-              onClick={() => {
-                // 背景设置 - 在设置弹窗中滚动到背景部分
-                setShowSettings(true);
-                setShowNavMenu(false);
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-teal-50 text-teal-600 transition-colors"
-            >
-              <Image className="w-5 h-5" />
-              <span className="text-sm font-medium">背景设置</span>
-            </button>
-
-            <div className="border-t my-2" />
-
-            {/* 第四组：工具 */}
+            {/* 第二组：工具 */}
             <button
               onClick={() => { setShowExport(true); setShowNavMenu(false); }}
               className="w-full flex items-center gap-3 px-4 py-3 hover:bg-teal-50 text-teal-600 transition-colors"
@@ -1930,20 +2155,6 @@ ${recentMsgText}
               <span className="text-sm font-medium">清空对话记录</span>
             </button>
 
-            <div className="border-t my-2" />
-
-            {/* 全局设置入口 */}
-            <button
-              onClick={() => {
-                // 跳转到主页打开全局设置
-                navigate('/');
-                setShowNavMenu(false);
-              }}
-              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-blue-50 text-blue-600 transition-colors"
-            >
-              <Settings className="w-5 h-5" />
-              <span className="text-sm font-medium">全局设置</span>
-            </button>
           </div>
         </>
       )}
@@ -1977,7 +2188,7 @@ ${recentMsgText}
                 />
                 <p className="text-lg font-medium text-gray-800 mb-2">{currentCharacter?.name}</p>
                 <p className="text-gray-600 whitespace-pre-wrap">
-                  {currentCharacter?.greetingPrompt || `嗨~终于等到你啦，今天过得怎么样？`}
+                  {currentCharacter?.greetingPrompt || `正在加载开场白...`}
                 </p>
               </div>
               <p className="text-gray-400 text-sm mt-6">
@@ -2023,8 +2234,22 @@ ${recentMsgText}
                 <button
                   onClick={() => {
                     if (confirm('确定删除这条消息？')) {
-                      // 删除消息
-                      const updatedMessages = messages.filter((_, i) => i !== msgIndex);
+                      // 根据消息ID删除，而不是索引（避免闭包问题）
+                      const messageId = msg.id;
+                      const updatedMessages = messages.filter(m => m.id !== messageId);
+                      console.log('【删除调试】删除消息ID:', messageId);
+                      console.log('【删除调试】删除后消息数:', updatedMessages.length);
+                      // 使用 saveMessages 覆盖模式保存
+                      if (currentCharacter) {
+                        saveMessages(currentCharacter.id, updatedMessages);
+                        console.log('【删除调试】已保存到localStorage');
+                        // 立即更新hash，防止loadMessages重新加载旧数据
+                        lastSavedHashRef.current = updatedMessages.map(m => m.id).join(',');
+                        console.log('【删除调试】新hash:', lastSavedHashRef.current);
+                        // 验证保存成功
+                        const verify = getMessages(currentCharacter.id);
+                        console.log('【删除调试】验证localStorage中的消息数:', verify.length);
+                      }
                       setMessages(updatedMessages);
                       showToast('消息已删除', 'info', '🗑️');
                     }
@@ -2038,6 +2263,17 @@ ${recentMsgText}
                 {msg.role === 'user' && (
                   <button
                     onClick={async () => {
+                      // 防止重复点击
+                      if (isLoading) {
+                        showToast('正在生成中，请稍候...', 'info', '🔄');
+                        return;
+                      }
+
+                      // 取消所有待触发的订阅信件定时器
+                      const pendingTimers = (window as any).__pendingAutoLetterTimers || [];
+                      pendingTimers.forEach((timer: number) => clearTimeout(timer));
+                      (window as any).__pendingAutoLetterTimers = [];
+
                       const newContent = prompt('请输入改写后的内容：', msg.content);
                       if (newContent && newContent !== msg.content) {
                         setIsLoading(true);
@@ -2052,6 +2288,10 @@ ${recentMsgText}
                             updatedMessages.splice(aiReplyIndex, 1);
                           }
 
+                          // 保存到 localStorage
+                          if (currentCharacter) {
+                            saveMessages(currentCharacter.id, updatedMessages);
+                          }
                           setMessages(updatedMessages);
 
                           // 获取历史消息（不包括被删除的AI回复）
@@ -2066,15 +2306,26 @@ ${recentMsgText}
                             currentCharacter!.systemPrompt
                           );
 
-                          // 保存新的AI回复
-                          const newAiMsg = saveMessage({
+                          // 创建新的AI回复对象（不调用saveMessage追加）
+                          const newAiMsg: Message = {
+                            id: `msg_${Date.now()}`,
                             role: 'assistant',
                             content: response.content,
                             characterId: currentCharacter!.id,
                             userId: 'current_user',
-                          });
+                            createdAt: new Date().toISOString(),
+                          };
 
-                          setMessages(prev => [...prev, newAiMsg]);
+                          // 构建完整的新消息列表
+                          const finalMessages = [...updatedMessages, newAiMsg];
+
+                          // 重要：使用 saveMessages 覆盖模式保存到 localStorage
+                          saveMessages(currentCharacter!.id, finalMessages);
+                          // 更新hash，防止loadMessages重新加载旧数据
+                          lastSavedHashRef.current = finalMessages.map(m => m.id).join(',');
+
+                          // 更新消息列表
+                          setMessages(finalMessages);
                           showToast('已重新生成回复~', 'success', '✨');
                         } catch (error) {
                           showToast('重新生成失败', 'error', '❌');
@@ -2103,6 +2354,17 @@ ${recentMsgText}
                     </button>
                     <button
                       onClick={async () => {
+                        // 防止重复点击
+                        if (isLoading) {
+                          showToast('正在生成中，请稍候...', 'info', '🔄');
+                          return;
+                        }
+
+                        // 取消所有待触发的订阅信件定时器（避免重说完成时又触发信件）
+                        const pendingTimers = (window as any).__pendingAutoLetterTimers || [];
+                        pendingTimers.forEach((timer: number) => clearTimeout(timer));
+                        (window as any).__pendingAutoLetterTimers = [];
+
                         // 改写功能：重新生成AI回复
                         // 注意：msgIndex已通过map回调传入
                         const currentIndex = msgIndex;
@@ -2116,7 +2378,7 @@ ${recentMsgText}
                           return;
                         }
 
-                        // 删除当前AI消息
+                        // 删除当前AI消息（不保存到localStorage）
                         const updatedMessages = messages.filter((m, i) => i !== currentIndex);
 
                         // 重新构建历史消息（不包括要重新生成的那条AI回复）
@@ -2136,16 +2398,26 @@ ${recentMsgText}
                             currentCharacter!.systemPrompt
                           );
 
-                          // 保存新的AI回复
-                          const newAiMsg = saveMessage({
+                          // 创建新的AI回复对象（不调用saveMessage追加）
+                          const newAiMsg: Message = {
+                            id: `msg_${Date.now()}`,
                             role: 'assistant',
                             content: response.content,
                             characterId: currentCharacter!.id,
                             userId: 'current_user',
-                          });
+                            createdAt: new Date().toISOString(),
+                          };
+
+                          // 构建完整的新消息列表
+                          const finalMessages = [...updatedMessages, newAiMsg];
+
+                          // 重要：使用 saveMessages 覆盖模式保存到 localStorage
+                          saveMessages(currentCharacter!.id, finalMessages);
+                          // 更新hash，防止loadMessages重新加载旧数据
+                          lastSavedHashRef.current = finalMessages.map(m => m.id).join(',');
 
                           // 更新消息列表
-                          setMessages([...updatedMessages, newAiMsg]);
+                          setMessages(finalMessages);
                           showToast('重新生成成功~', 'success', '✨');
                         } catch (error: any) {
                           // 恢复原消息
@@ -2208,16 +2480,6 @@ ${recentMsgText}
         <div className="max-w-4xl mx-auto">
           <div className="flex items-end gap-2">
             <div className="flex-1 flex items-end gap-2">
-              <label className="p-2.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-full cursor-pointer flex-shrink-0">
-                <Image className="w-5 h-5" />
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageUpload}
-                  className="hidden"
-                />
-              </label>
-
               <label className="p-2.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-full cursor-pointer flex-shrink-0" title="上传文本文件(.txt/.md)">
                 <FileText className="w-5 h-5" />
                 <input
@@ -2297,19 +2559,19 @@ ${recentMsgText}
               <div>
                 <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
                   <User className="w-4 h-4" />
-                  头像设置
+                  头像设置（{currentCharacter?.name || '当前角色'}专属）
                 </label>
                 <input
                   type="text"
-                  value={userConfig.customAvatar || ''}
-                  onChange={(e) => setUserConfig({ ...userConfig, customAvatar: e.target.value })}
+                  value={charAvatarUrl}
+                  onChange={(e) => setCharAvatarUrl(e.target.value)}
                   placeholder="头像URL（支持http/https）"
                   className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-pink-500"
                 />
-                {userConfig.customAvatar && (
+                {charAvatarUrl && (
                   <div className="mt-2 flex items-center gap-2">
                     <img
-                      src={userConfig.customAvatar}
+                      src={charAvatarUrl}
                       alt="头像预览"
                       className="w-12 h-12 rounded-full object-cover"
                       onError={(e) => {
@@ -2319,6 +2581,7 @@ ${recentMsgText}
                     <span className="text-xs text-gray-500">头像预览</span>
                   </div>
                 )}
+                <p className="text-xs text-gray-500 mt-1">每个角色的头像独立保存</p>
               </div>
 
               {/* 背景色设置 */}
@@ -2343,19 +2606,19 @@ ${recentMsgText}
                 </label>
                 <input
                   type="text"
-                  value={getCurrentCharacterBgUrl() || ''}
-                  onChange={(e) => handleBgUrlChange(e.target.value)}
+                  value={charBgUrl}
+                  onChange={(e) => setCharBgUrl(e.target.value)}
                   placeholder="输入图片URL作为背景"
                   className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-pink-500"
                 />
                 <p className="text-xs text-gray-500 mt-1">每个角色的背景独立保存，建议使用https链接</p>
                 {/* 背景图片预览 */}
-                {getCurrentCharacterBgUrl() && (
+                {charBgUrl && (
                   <div className="mt-2">
                     <p className="text-xs text-gray-500 mb-1">预览：</p>
                     <div className="w-full h-24 rounded-lg overflow-hidden border border-gray-200">
                       <img
-                        src={getCurrentCharacterBgUrl()}
+                        src={charBgUrl}
                         alt="背景预览"
                         className="w-full h-full object-cover"
                         onError={(e) => {
@@ -2605,7 +2868,7 @@ ${recentMsgText}
 
               {/* 图片网格 */}
               <div className="grid grid-cols-4 md:grid-cols-6 gap-3">
-                {(imageSearch ? searchImages(imageSearch) : imageLibrary).map((img) => (
+                {(imageSearch ? searchImages(imageSearch, currentCharacter?.id) : imageLibrary).map((img) => (
                   <div
                     key={img.id}
                     className="relative aspect-square rounded-lg overflow-visible group"
@@ -2613,7 +2876,7 @@ ${recentMsgText}
                     <button
                       onClick={() => handleSelectImage(img)}
                       className="w-full h-full rounded-lg overflow-hidden hover:ring-2 hover:ring-pink-400 transition-all"
-                      title={img.name}
+                      title={img.name + (img.characterId ? ` [${characters.find(c => c.id === img.characterId)?.name || '其他角色'}]` : ' [全局]')}
                     >
                       <img
                         src={img.url}
@@ -2697,6 +2960,26 @@ ${recentMsgText}
                   autoFocus
                 />
                 <p className="text-xs text-gray-500 mt-1">给表情起个名字，方便发送时引用</p>
+              </div>
+
+              {/* 表情所属角色选择 */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  所属角色
+                </label>
+                <select
+                  value={newEmojiCharacter}
+                  onChange={(e) => setNewEmojiCharacter(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-pink-500"
+                >
+                  <option value="">当前角色（{currentCharacter?.name || '请选择'}）</option>
+                  {characters.map(char => (
+                    <option key={char.id} value={char.id}>
+                      {char.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">选择将此表情添加到哪个角色的表情库</p>
               </div>
 
               <div>
@@ -3129,18 +3412,22 @@ ${recentMsgText}
               <div className="flex gap-3">
                 <button
                   onClick={async () => {
-                    // 修复7：按角色ID保存调教设置
-                    const tuningKey = `ai_chat_tuning_${currentCharacter?.id || 'default'}`;
+                    // Bug2修复：确保有currentCharacter时才保存
+                    if (!currentCharacter) {
+                      showToast('请先选择一个角色', 'error', '❌');
+                      return;
+                    }
+
+                    // 按角色ID保存调教设置（确保键一致）
+                    const tuningKey = `ai_chat_tuning_${currentCharacter.id}`;
                     const tuningData = {
                       customPrompt: userCustomPrompt,
                       forceMemory: userForceMemory,
                     };
                     localStorage.setItem(tuningKey, JSON.stringify(tuningData));
 
-                    // Bug7: 同步到云端
-                    if (currentCharacter) {
-                      saveTuningToCloud(currentCharacter.id, userCustomPrompt, userForceMemory);
-                    }
+                    // 同步到云端
+                    saveTuningToCloud(currentCharacter.id, userCustomPrompt, userForceMemory);
 
                     showToast('调教设置已保存~', 'success', '✨');
                     setShowTuning(false);
@@ -3153,7 +3440,7 @@ ${recentMsgText}
 
                         const response = await smartChat(
                           [{ role: 'user', content: confirmPrompt }],
-                          `${currentCharacter?.systemPrompt || ''}\n\n【强制记忆 - 必须始终遵守】\n${userForceMemory}`
+                          `${currentCharacter.systemPrompt || ''}\n\n【强制记忆 - 必须始终遵守】\n${userForceMemory}`
                         );
 
                         // 保存AI的确认回复
