@@ -28,7 +28,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --prefer-offline
+        run: pnpm install
 
       - name: Build project
         run: pnpm run build
